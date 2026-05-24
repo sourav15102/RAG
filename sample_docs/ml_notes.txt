@@ -1,0 +1,24 @@
+Machine Learning Fundamentals
+
+Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. The process begins with feeding large amounts of data into algorithms that can identify patterns and make decisions with minimal human intervention.
+
+Supervised Learning
+In supervised learning, the algorithm is trained on labeled data — input-output pairs where the correct answer is already known. Common examples include linear regression for predicting house prices, logistic regression for binary classification, and neural networks for image recognition. The goal is to learn a mapping from inputs to outputs that generalizes well to unseen data.
+
+Unsupervised Learning
+Unsupervised learning works with unlabeled data. The algorithm tries to find hidden structure in the input. Clustering algorithms like k-means group similar data points together. Dimensionality reduction techniques like PCA compress data into fewer dimensions while preserving important information.
+
+Reinforcement Learning
+Reinforcement learning involves an agent that learns to make decisions by interacting with an environment. The agent receives rewards for good actions and penalties for bad ones. Over time, it learns a policy that maximizes cumulative reward. Applications include game playing, robotics, and recommendation systems.
+
+Neural Networks and Deep Learning
+Neural networks are inspired by the human brain. They consist of layers of interconnected nodes (neurons) that transform inputs into outputs through a series of linear and non-linear operations. Deep learning refers to neural networks with many layers, enabling them to learn hierarchical representations of data.
+
+Transformers and Attention
+The transformer architecture, introduced in "Attention is All You Need" (2017), revolutionized natural language processing. At its core is the self-attention mechanism, which allows the model to weigh the importance of different words in a sequence relative to each other. This enabled models like BERT, GPT, and T5 to achieve state-of-the-art performance across a wide range of tasks.
+
+Retrieval Augmented Generation
+RAG is a technique that combines retrieval systems with generative language models. Instead of relying solely on parametric knowledge stored in model weights, RAG systems retrieve relevant documents from an external knowledge base and use them as context for generation. This grounds the model's responses in factual, up-to-date information and reduces hallucination.
+
+Evaluation Metrics
+Evaluating machine learning models requires choosing the right metrics. For classification: accuracy, precision, recall, F1-score, and AUC-ROC. For regression: MAE, MSE, RMSE, and R-squared. For language models: perplexity, BLEU, ROUGE, and increasingly, LLM-based evaluation frameworks like RAGAS.

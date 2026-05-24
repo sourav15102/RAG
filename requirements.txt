@@ -1,0 +1,7 @@
+tiktoken
+sentence-transformers
+qdrant-client
+rank-bm25
+einops
+anthropic
+python-dotenv
