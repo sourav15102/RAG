@@ -11,3 +11,6 @@ data/
 qdrant_storage/
 .claude/
 third_party/
+.pytest_cache/
+.idea/
+.opencode/
