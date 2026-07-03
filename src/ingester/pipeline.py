@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from .step import PipelineContext, Step
+from ingester.step import PipelineContext, Step
 
 
 @dataclass

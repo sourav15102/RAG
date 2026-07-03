@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ast_chunker import (
+from code_chunker.ast_chunker import (
     CodeChunk,
     _chunk_class,
     _chunk_function,

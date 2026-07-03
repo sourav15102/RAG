@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ast_chunker import CodeChunk
-from docstring_backfiller import DEFAULT_MAX_CHARS, DocstringBackfiller
+from code_chunker.ast_chunker import CodeChunk
+from code_chunker.docstring_backfiller import DEFAULT_MAX_CHARS, DocstringBackfiller
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from .pipeline import Pipeline
-from .step import PipelineContext
+from ingester.pipeline import Pipeline
+from ingester.step import PipelineContext
 
 
 class Ingester:
