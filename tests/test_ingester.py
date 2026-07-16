@@ -268,6 +268,152 @@ class TestCodeEmbeddingPipeline:
         assert result == sample_embeddings
 
 
+# ---------------------------------------------------------------------------
+# RRF
+# ---------------------------------------------------------------------------
+
+class TestRRF:
+    def test_fuses_two_lists(self):
+        from search.rrf import rrf_fuse
+        bm25 = ["a", "b", "c"]
+        vector = ["b", "c", "a"]
+        result = rrf_fuse([bm25, vector], k=60)
+        assert result[0] == "b"  # rank 1 in vector, rank 2 in BM25
+        assert set(result) == {"a", "b", "c"}
+
+    def test_preserves_order_within_same_rank(self):
+        from search.rrf import rrf_fuse
+        result = rrf_fuse([["x", "y"], ["x", "y"]], k=60)
+        assert result[0] == "x"
+        assert result[1] == "y"
+
+    def test_single_list(self):
+        from search.rrf import rrf_fuse
+        assert rrf_fuse([["a", "b"]]) == ["a", "b"]
+
+    def test_empty_input(self):
+        from search.rrf import rrf_fuse
+        assert rrf_fuse([]) == []
+
+
+# ---------------------------------------------------------------------------
+# ChunkFetcher
+# ---------------------------------------------------------------------------
+
+class TestChunkFetcher:
+    def test_fetches_chunks_from_qdrant(self):
+        from search.fetcher import fetch_chunks
+
+        fake_point = MagicMock()
+        fake_point.payload = {
+            "chunk_id": "repo/x.py::foo",
+            "content": "def foo(): pass",
+            "chunk_type": "function",
+            "name": "foo",
+            "file_path": "x.py",
+            "start_line": 1,
+            "end_line": 2,
+            "parent_class": None,
+            "decorators": [],
+            "docstring": None,
+            "calls": [],
+            "is_fallback_split": False,
+            "line_count": 1,
+        }
+
+        client = MagicMock()
+        client.retrieve.return_value = [fake_point]
+
+        store = MagicMock()
+        store._client = client
+
+        chunks = fetch_chunks(store, ["repo/x.py::foo"])
+        assert len(chunks) == 1
+        assert chunks[0].name == "foo"
+        assert chunks[0].content == "def foo(): pass"
+
+    def test_skips_missing_ids(self):
+        from search.fetcher import fetch_chunks
+
+        client = MagicMock()
+        client.retrieve.return_value = []
+
+        store = MagicMock()
+        store._client = client
+
+        chunks = fetch_chunks(store, ["missing_id"])
+        assert chunks == []
+
+
+# ---------------------------------------------------------------------------
+# Generator
+# ---------------------------------------------------------------------------
+
+class TestGenerator:
+    def test_builds_context(self):
+        from search.generator import _build_context
+        chunk = CodeChunk(
+            content="def foo(): pass",
+            chunk_type="function",
+            name="foo",
+            file_path="test.py",
+            start_line=1,
+            end_line=1,
+            docstring="Does something.",
+        )
+        ctx = _build_context([chunk])
+        assert "function: foo" in ctx
+        assert "test.py:1" in ctx
+        assert "Does something." in ctx
+        assert "def foo(): pass" in ctx
+
+    def test_no_api_key_returns_error(self):
+        from search.generator import generate
+        result = generate("query", [], api_key="")
+        assert "no API key" in result
+
+
+# ---------------------------------------------------------------------------
+# SearchStep
+# ---------------------------------------------------------------------------
+
+class TestSearchStep:
+    def test_search_orchestrates_full_pipeline(self):
+        from ingester.steps.search_step import SearchStep
+        from search.generator import generate
+
+        bm25 = MagicMock()
+        bm25.search.return_value = ["id_a", "id_b", "id_c"]
+
+        qdrant = MagicMock()
+        qdrant.search.return_value = [("id_b", 0.9), ("id_c", 0.8), ("id_a", 0.7)]
+
+        embedder = MagicMock()
+        embedder.embed_query.return_value = [0.1, 0.2, 0.3]
+
+        fake_point_a = MagicMock()
+        fake_point_a.payload = {"chunk_id": "id_a", "content": "def a(): pass",
+            "chunk_type": "function", "name": "a", "file_path": "x.py",
+            "start_line": 1, "end_line": 1}
+        fake_point_b = MagicMock()
+        fake_point_b.payload = {"chunk_id": "id_b", "content": "def b(): pass",
+            "chunk_type": "function", "name": "b", "file_path": "x.py",
+            "start_line": 2, "end_line": 2}
+
+        qdrant._client.retrieve.return_value = [fake_point_a, fake_point_b]
+
+        step = SearchStep(bm25, qdrant, embedder, llm_api_key="")
+        ctx = PipelineContext()
+        result = step.execute(ctx, "how does foo work?")
+
+        assert "chunk_ids" in result
+        assert "chunks" in result
+        assert "answer" in result
+        bm25.search.assert_called_once()
+        qdrant.search.assert_called_once()
+        embedder.embed_query.assert_called_once_with("how does foo work?")
+
+
 class TestIngesterWithPipeline:
     def test_ingester_orchestrates_code_pipeline(self, sample_code, sample_chunks, sample_embeddings):
         mock_store = MagicMock(spec=VectorStore)
