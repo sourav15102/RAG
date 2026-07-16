@@ -5,6 +5,7 @@ requires-python = ">=3.13"
 dependencies = [
     "elasticsearch>=9.4.1",
     "qdrant-client>=1.18.0",
+    "sentence-transformers>=5.6.0",
 ]
 
 [project.optional-dependencies]

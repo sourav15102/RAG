@@ -8,6 +8,7 @@ from embedder.code_embedder import CodeEmbedder
 from search.rrf import rrf_fuse
 from search.fetcher import fetch_chunks
 from search.generator import generate
+from search.reranker import CrossEncoderReranker
 
 
 class SearchStep(Step):
@@ -19,15 +20,19 @@ class SearchStep(Step):
         qdrant_store: QdrantStore,
         embedder: CodeEmbedder,
         rrf_k: int = 60,
-        top_k: int = 10,
+        top_k: int = 20,
+        rerank_top_n: int = 5,
         llm_api_key: str | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ):
         self._bm25 = bm25_store
         self._qdrant = qdrant_store
         self._embedder = embedder
         self.rrf_k = rrf_k
         self.top_k = top_k
+        self.rerank_top_n = rerank_top_n
         self.llm_api_key = llm_api_key
+        self._reranker = reranker or CrossEncoderReranker()
 
     def execute(self, ctx: PipelineContext, data: str) -> Any:
         query = data
@@ -46,6 +51,8 @@ class SearchStep(Step):
 
         chunks = fetch_chunks(self._qdrant, fused)
 
+        chunks = self._reranker.rerank(query, chunks, top_n=self.rerank_top_n)
+
         answer = generate(
             query=query,
             chunks=chunks,
@@ -54,7 +61,7 @@ class SearchStep(Step):
 
         return {
             "answer": answer,
-            "chunk_ids": fused,
+            "chunk_ids": [c.name for c in chunks],
             "chunks": chunks,
         }
 
