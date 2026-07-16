@@ -1,10 +1,13 @@
-from typing import Any
-
 from embedder.code_embedder import CodeEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
 from .vector_store import VectorStore
+
+
+def build_chunk_id(chunk, repo: str = "") -> str:
+    prefix = f"{repo}/" if repo else ""
+    return f"{prefix}{chunk.file_path}::{chunk.name}"
 
 
 class QdrantStore(VectorStore):
@@ -14,10 +17,12 @@ class QdrantStore(VectorStore):
         port: int = 6333,
         collection: str = "code_chunks",
         vector_size: int = 1024,
+        repo: str = "",
     ):
         self._client = QdrantClient(host=host, port=port)
         self.collection = collection
         self.vector_size = vector_size
+        self.repo = repo
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -35,14 +40,16 @@ class QdrantStore(VectorStore):
 
     def upsert(self, records: list[CodeEmbedding]) -> None:
         points = []
-        for i, rec in enumerate(records):
+        for rec in records:
             chunk = rec.chunk
-            point_id = hash(f"{chunk.file_path}::{chunk.name}::{chunk.start_line}")
+            chunk_id = build_chunk_id(chunk, repo=self.repo)
+            point_id = hash(chunk_id)
             points.append(
                 models.PointStruct(
                     id=point_id,
                     vector={"code": rec.embedding},
                     payload={
+                        "chunk_id": chunk_id,
                         "name": chunk.name,
                         "chunk_type": chunk.chunk_type,
                         "file_path": chunk.file_path,
@@ -68,7 +75,7 @@ class QdrantStore(VectorStore):
         query_vector: list[float],
         top_k: int = 10,
         vector_name: str = "code",
-    ) -> list[Any]:
+    ) -> list[tuple[str, float]]:
         results = self._client.search(
             collection_name=self.collection,
             query_vector=models.NamedVector(
@@ -77,4 +84,4 @@ class QdrantStore(VectorStore):
             ),
             limit=top_k,
         )
-        return results
+        return [(r.payload["chunk_id"], r.score) for r in results]

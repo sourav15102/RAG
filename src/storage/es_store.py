@@ -64,11 +64,14 @@ def index_chunks(
     chunks: list[CodeChunk],
     index: str = INDEX_NAME,
     tenant_id: str = "default",
+    repo: str = "",
 ) -> None:
+    prefix = f"{repo}/" if repo else ""
     for chunk in chunks:
+        chunk_id = f"{prefix}{chunk.file_path}::{chunk.name}"
         doc = {
             "bm25_text": chunk.content,
-            "chunk_id": f"{chunk.file_path}::{chunk.name}",
+            "chunk_id": chunk_id,
             "file_path": chunk.file_path,
             "name": chunk.name,
             "chunk_type": chunk.chunk_type,
