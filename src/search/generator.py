@@ -1,9 +1,8 @@
-import json
 import os
-import urllib.request
 from typing import Optional
 
 from code_chunker.ast_chunker import CodeChunk
+from search.utils.llm import _llm_complete
 
 
 SYSTEM_PROMPT = (
@@ -38,30 +37,7 @@ def generate(
     context = _build_context(chunks)
     user_msg = f"Question: {query}\n\nRelevant code:\n{context}"
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": 0.3,
-        "stream": False,
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url}/v1/chat/completions",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        return result["choices"][0]["message"]["content"].strip()
+        return _llm_complete(SYSTEM_PROMPT, user_msg, api_key, model, base_url, timeout)
     except Exception as exc:
         return f"[generation failed: {exc}]"

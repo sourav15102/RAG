@@ -9,6 +9,8 @@ from search.rrf import rrf_fuse
 from search.fetcher import fetch_chunks
 from search.generator import generate
 from search.reranker import CrossEncoderReranker
+from search.query_rewriter import rewrite_query
+from search.hyde import generate_hypothetical_docstring
 
 
 class SearchStep(Step):
@@ -24,6 +26,8 @@ class SearchStep(Step):
         rerank_top_n: int = 5,
         llm_api_key: str | None = None,
         reranker: CrossEncoderReranker | None = None,
+        rewrite: bool = True,
+        use_hyde: bool = True,
     ):
         self._bm25 = bm25_store
         self._qdrant = qdrant_store
@@ -33,9 +37,19 @@ class SearchStep(Step):
         self.rerank_top_n = rerank_top_n
         self.llm_api_key = llm_api_key
         self._reranker = reranker or CrossEncoderReranker()
+        self.rewrite = rewrite
+        self.use_hyde = use_hyde
 
     def execute(self, ctx: PipelineContext, data: str) -> Any:
         query = data
+
+        if self.rewrite and self.llm_api_key:
+            query = rewrite_query(query, api_key=self.llm_api_key)
+
+        if self.use_hyde and self.llm_api_key:
+            hyde_query = generate_hypothetical_docstring(query, api_key=self.llm_api_key)
+            if hyde_query:
+                query = hyde_query
 
         with ThreadPoolExecutor() as ex:
             futures = {
@@ -54,7 +68,7 @@ class SearchStep(Step):
         chunks = self._reranker.rerank(query, chunks, top_n=self.rerank_top_n)
 
         answer = generate(
-            query=query,
+            query=data,
             chunks=chunks,
             api_key=self.llm_api_key,
         )
