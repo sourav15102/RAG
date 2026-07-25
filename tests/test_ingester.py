@@ -358,19 +358,71 @@ class TestGenerator:
             name="foo",
             file_path="test.py",
             start_line=1,
-            end_line=1,
+            end_line=5,
             docstring="Does something.",
         )
         ctx = _build_context([chunk])
         assert "function: foo" in ctx
-        assert "test.py:1" in ctx
+        assert "test.py:1-5" in ctx
         assert "Does something." in ctx
         assert "def foo(): pass" in ctx
 
     def test_no_api_key_returns_error(self):
-        from search.generator import generate
+        from search.generator import GenerationResult, generate
         result = generate("query", [], api_key="")
-        assert "no API key" in result
+        assert isinstance(result, GenerationResult)
+        assert "no API key" in result.answer
+
+    def test_parses_valid_json_response(self):
+        import json
+        from unittest.mock import patch
+        from search.generator import Claim, generate
+
+        fake_response = json.dumps({
+            "answer": "process_payment validates amount.",
+            "claims": [
+                {
+                    "claim": "validates amount",
+                    "source_chunk": "payments/service.py",
+                    "source_function": "PaymentService.process",
+                    "lines": "45-48",
+                    "confidence": "high",
+                }
+            ],
+            "unanswered_parts": "gateway selection",
+        })
+
+        with patch("search.generator._llm_complete", return_value=fake_response):
+            result = generate("how does payment work?", [], api_key="sk-test")
+
+        assert result.answer == "process_payment validates amount."
+        assert len(result.claims) == 1
+        assert isinstance(result.claims[0], Claim)
+        assert result.claims[0].confidence == "high"
+        assert result.claims[0].source_chunk == "payments/service.py"
+        assert result.unanswered_parts == "gateway selection"
+
+    def test_fallback_on_invalid_json(self):
+        from unittest.mock import patch
+        from search.generator import GenerationResult, generate
+
+        with patch("search.generator._llm_complete", return_value="not json"):
+            result = generate("query", [], api_key="sk-test")
+
+        assert isinstance(result, GenerationResult)
+        assert result.answer == "not json"
+        assert result.claims == []
+
+    def test_parse_claims_defaults_medium_on_invalid_confidence(self):
+        from search.generator import _parse_claims
+        claims = _parse_claims([{
+            "claim": "x",
+            "source_chunk": "a.py",
+            "source_function": "f",
+            "lines": "1-2",
+            "confidence": "unknown_value",
+        }])
+        assert claims[0].confidence == "medium"
 
 
 # ---------------------------------------------------------------------------

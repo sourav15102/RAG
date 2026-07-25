@@ -67,14 +67,16 @@ class SearchStep(Step):
 
         chunks = self._reranker.rerank(query, chunks, top_n=self.rerank_top_n)
 
-        answer = generate(
+        result = generate(
             query=data,
             chunks=chunks,
             api_key=self.llm_api_key,
         )
 
         return {
-            "answer": answer,
+            "answer": result.answer,
+            "claims": result.claims,
+            "unanswered_parts": result.unanswered_parts,
             "chunk_ids": [c.name for c in chunks],
             "chunks": chunks,
         }

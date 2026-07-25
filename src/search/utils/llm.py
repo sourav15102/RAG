@@ -9,6 +9,7 @@ def _llm_complete(
     model: str = "deepseek-chat",
     base_url: str = "https://api.deepseek.com",
     timeout: int = 30,
+    response_format: dict | None = None,
 ) -> str:
     payload = {
         "model": model,
@@ -19,6 +20,8 @@ def _llm_complete(
         "temperature": 0.3,
         "stream": False,
     }
+    if response_format is not None:
+        payload["response_format"] = response_format
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{base_url}/v1/chat/completions",
