@@ -35,8 +35,8 @@ class RAGEvaluator:
         sample_dir: str = SAMPLE_DIR,
         golden_path: str = GOLDEN_PATH,
         output_path: str = OUTPUT_PATH,
-        top_k: int = 20,
-        rerank_top_n: int = 5,
+        top_k: int = 50,
+        rerank_top_n: int = 3,
         rewrite: bool = False,
         use_hyde: bool = False,
     ):
