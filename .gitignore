@@ -14,3 +14,4 @@ third_party/
 .pytest_cache/
 .idea/
 .opencode/
+eval_results.json

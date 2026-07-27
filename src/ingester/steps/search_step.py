@@ -77,7 +77,7 @@ class SearchStep(Step):
             "answer": result.answer,
             "claims": result.claims,
             "unanswered_parts": result.unanswered_parts,
-            "chunk_ids": [c.name for c in chunks],
+            "chunk_ids": [f"{c.file_path}::{c.name}" for c in chunks],
             "chunks": chunks,
         }
 

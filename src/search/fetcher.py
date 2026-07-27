@@ -1,5 +1,5 @@
 from code_chunker.ast_chunker import CodeChunk
-from ingester.storage.qdrant_store import QdrantStore
+from ingester.storage.qdrant_store import QdrantStore, _point_id
 
 
 def fetch_chunks(
@@ -8,7 +8,7 @@ def fetch_chunks(
 ) -> list[CodeChunk]:
     results = store._client.retrieve(
         collection_name=store.collection,
-        ids=[hash(cid) for cid in chunk_ids],
+        ids=[_point_id(cid) for cid in chunk_ids],
     )
     id_map = {r.payload["chunk_id"]: r for r in results}
 

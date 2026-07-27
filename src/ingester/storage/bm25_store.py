@@ -13,22 +13,22 @@ class BM25Store:
         repo: str = "",
     ):
         self._es = es
-        self.index = index
+        self._index = index
         self.tenant_id = tenant_id
         self.repo = repo
 
     def ensure_index(self) -> None:
-        if not self._es.indices.exists(index=self.index):
-            create_index(self._es, index=self.index)
+        if not self._es.indices.exists(index=self._index):
+            create_index(self._es, index=self._index)
 
     def index(self, chunks: list[CodeChunk]) -> None:
-        index_chunks(self._es, chunks, index=self.index, tenant_id=self.tenant_id, repo=self.repo)
+        index_chunks(self._es, chunks, index=self._index, tenant_id=self.tenant_id, repo=self.repo)
 
     def search(self, query: str, top_k: int = 10) -> list[str]:
         return _search_bm25(
             self._es,
             query,
             top_k=top_k,
-            index=self.index,
+            index=self._index,
             tenant_id=self.tenant_id,
         )

@@ -1,3 +1,5 @@
+import hashlib
+
 from embedder.code_embedder import CodeEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -8,6 +10,10 @@ from .vector_store import VectorStore
 def build_chunk_id(chunk, repo: str = "") -> str:
     prefix = f"{repo}/" if repo else ""
     return f"{prefix}{chunk.file_path}::{chunk.name}"
+
+
+def _point_id(chunk_id: str) -> int:
+    return int.from_bytes(hashlib.md5(chunk_id.encode()).digest()[:8], "big")
 
 
 class QdrantStore(VectorStore):
@@ -43,7 +49,7 @@ class QdrantStore(VectorStore):
         for rec in records:
             chunk = rec.chunk
             chunk_id = build_chunk_id(chunk, repo=self.repo)
-            point_id = hash(chunk_id)
+            point_id = _point_id(chunk_id)
             points.append(
                 models.PointStruct(
                     id=point_id,
@@ -76,12 +82,10 @@ class QdrantStore(VectorStore):
         top_k: int = 10,
         vector_name: str = "code",
     ) -> list[tuple[str, float]]:
-        results = self._client.search(
+        results = self._client.query_points(
             collection_name=self.collection,
-            query_vector=models.NamedVector(
-                name=vector_name,
-                vector=query_vector,
-            ),
+            query=query_vector,
+            using=vector_name,
             limit=top_k,
-        )
+        ).points
         return [(r.payload["chunk_id"], r.score) for r in results]

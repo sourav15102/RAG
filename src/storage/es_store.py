@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from elasticsearch import Elasticsearch
 
 from code_chunker.ast_chunker import CodeChunk
@@ -15,19 +17,7 @@ def create_index(es: Elasticsearch, index: str = INDEX_NAME) -> None:
                         ANALYZER_NAME: {
                             "type": "custom",
                             "tokenizer": "standard",
-                            "filter": [
-                                "lowercase",
-                                "camel_case_filter",
-                                "word_delimiter_graph",
-                            ],
-                        }
-                    },
-                    "filter": {
-                        "camel_case_filter": {
-                            "type": "word_delimiter_graph",
-                            "split_on_case_change": True,
-                            "split_on_numerics": True,
-                            "preserve_original": True,
+                            "filter": ["lowercase"],
                         }
                     },
                 },
@@ -77,7 +67,7 @@ def index_chunks(
             "chunk_type": chunk.chunk_type,
             "source_type": "code",
             "tenant_id": tenant_id,
-            "last_updated": "now",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
         }
         es.index(index=index, document=doc)
 

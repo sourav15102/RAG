@@ -1,0 +1,355 @@
+[
+  {
+    "query_id": "q001",
+    "query": "How does the login flow check if an account is locked before verifying the password?",
+    "chunks": [
+      "sample_docs/auth_service.py::AuthService.login",
+      "sample_docs/auth_service.py::AccountLockedError.__init__"
+    ],
+    "answer": "AuthService.login looks up the user by username, raising InvalidCredentialsError if none exists. It then calls user.is_locked() and, if true, raises AccountLockedError with the username and stored locked_until timestamp before ever touching the password. Only if the account isn't locked does it call verify_password against the stored salt and hash."
+  },
+  {
+    "query_id": "q002",
+    "query": "What counts as a valid email address in this codebase?",
+    "chunks": ["sample_docs/auth_service.py::is_valid_email"],
+    "answer": "An email is valid if it matches EMAIL_REGEX: one or more non-@/whitespace characters, an @, more non-@/whitespace characters, a literal dot, then a 2+ letter TLD. is_valid_email() just returns whether the input matches that pattern."
+  },
+  {
+    "query_id": "q003",
+    "query": "How are passwords hashed and verified?",
+    "chunks": [
+      "sample_docs/auth_service.py::hash_password",
+      "sample_docs/auth_service.py::verify_password"
+    ],
+    "answer": "hash_password runs PBKDF2-HMAC-SHA256 on the password with a salt, 100,000 iterations, and base64-encodes the result. verify_password re-hashes the candidate password with the stored salt and compares it to the expected hash using hmac.compare_digest for constant-time comparison, avoiding timing attacks."
+  },
+  {
+    "query_id": "q004",
+    "query": "What happens when an account exceeds the maximum login attempts?",
+    "chunks": ["sample_docs/auth_service.py::User.register_failed_attempt"],
+    "answer": "User.register_failed_attempt increments failed_attempts, and once it reaches MAX_LOGIN_ATTEMPTS (5), it sets locked_until to now plus LOCKOUT_DURATION_SECONDS (900 seconds / 15 minutes)."
+  },
+  {
+    "query_id": "q005",
+    "query": "How do I check whether a session token has expired?",
+    "chunks": ["sample_docs/auth_service.py::Session.is_expired"],
+    "answer": "Session.is_expired computes the session's age as the difference between now and created_at in seconds, and returns True if that age exceeds ttl_seconds."
+  },
+  {
+    "query_id": "q006",
+    "query": "What's the deal with the old permission-check function that predates the Role enum?",
+    "chunks": ["sample_docs/auth_service.py::legacy_permission_check"],
+    "answer": "legacy_permission_check is a legacy function still used by the old admin panel. It hardcodes an allowed_actions map from action name (read/write/delete/manage_users) to a list of role name strings, checks per-resource overrides first if provided, and falls back to deny_by_default if the action or role isn't recognized. It predates the Role enum used elsewhere and works with raw role-name strings instead."
+  },
+  {
+    "query_id": "q007",
+    "query": "How is a session revoked, and can all of a user's sessions be revoked at once?",
+    "chunks": [
+      "sample_docs/auth_service.py::SessionStore.revoke",
+      "sample_docs/auth_service.py::SessionStore.revoke_all_for_user"
+    ],
+    "answer": "SessionStore.revoke deletes a single session by token (a no-op if the token isn't present). SessionStore.revoke_all_for_user scans all sessions for a matching user_id, deletes each one, and returns the count of sessions revoked."
+  },
+  {
+    "query_id": "q008",
+    "query": "How does mask_email obscure part of an email address?",
+    "chunks": ["sample_docs/auth_service.py::mask_email"],
+    "answer": "mask_email splits on the first '@'. If the local part is 2 characters or fewer, it keeps the first character and replaces the rest with a single '*'; otherwise it keeps the first two characters and replaces the remaining local-part characters with '*', then reattaches the original domain unmasked."
+  },
+  {
+    "query_id": "q009",
+    "query": "What responsibilities does the AuthService class have?",
+    "chunks": ["sample_docs/auth_service.py::AuthService"],
+    "answer": "AuthService is the high-level authentication service coordinating registration, login, logout, session resolution, and role-based access checks, delegating persistence to a UserStore and a SessionStore."
+  },
+  {
+    "query_id": "q010",
+    "query": "How are quiet hours (do-not-disturb windows) determined for notifications?",
+    "chunks": ["sample_docs/notification_service.py::is_quiet_hours"],
+    "answer": "is_quiet_hours checks the current hour against a start/end window. If the start hour is after the end hour (the window wraps past midnight, e.g. 22 to 8), it returns True when the hour is at/after start OR before end; otherwise it returns True when the hour falls between start and end directly."
+  },
+  {
+    "query_id": "q011",
+    "query": "What happens to a notification if delivery keeps failing?",
+    "chunks": [
+      "sample_docs/notification_service.py::NotificationService._deliver_one",
+      "sample_docs/notification_service.py::NotificationService.flush"
+    ],
+    "answer": "_deliver_one retries delivery through the channel adapter, computing a delay via next_retry_delay for each attempt (based on DEFAULT_RETRY_DELAYS), and returns False if every attempt fails. flush, which drives delivery for all ready queued notifications, catches that failure (or a DeliveryFailedError if no adapter is registered) and moves the notification into the dead-letter list rather than leaving it queued."
+  },
+  {
+    "query_id": "q012",
+    "query": "How does a notification template get rendered into an actual message?",
+    "chunks": ["sample_docs/notification_service.py::Template.render"],
+    "answer": "Template.render fills in the body_template (and title_template, if present) using render_template against the given context. If the template's channel is SMS, the rendered body is truncated with truncate_for_sms; if it's PUSH and a title exists, the title is truncated with truncate_push_title."
+  },
+  {
+    "query_id": "q013",
+    "query": "What exception is raised if a template references a variable that isn't in the context?",
+    "chunks": ["sample_docs/notification_service.py::render_template"],
+    "answer": "render_template collects all {{var}} placeholders via extract_template_vars, checks which of them are missing from the context dict, and if any are missing raises TemplateRenderError listing those missing variable names."
+  },
+  {
+    "query_id": "q014",
+    "query": "Can a user still receive a notification through a channel they've unsubscribed from?",
+    "chunks": [
+      "sample_docs/notification_service.py::SubscriptionRegistry.is_subscribed",
+      "sample_docs/notification_service.py::NotificationService.enqueue_from_template"
+    ],
+    "answer": "No. enqueue_from_template checks self.subscriptions.is_subscribed(recipient, template.channel) before rendering and queuing anything, and raises UnsubscribedError if the recipient has opted out of that channel. is_subscribed itself just returns whether the channel is absent from that recipient's opt-out set."
+  },
+  {
+    "query_id": "q015",
+    "query": "How are notifications prioritized for delivery within flush()?",
+    "chunks": ["sample_docs/notification_service.py::priority_sort_key"],
+    "answer": "priority_sort_key returns a tuple of (negative priority value, scheduled_at). Sorting by this key puts higher-priority notifications first (since higher priority values become more negative and sort earlier), and among equal priorities, earlier scheduled_at times come first."
+  },
+  {
+    "query_id": "q016",
+    "query": "Tell me about the legacy recipient-merging helper from the old bulk-email tool.",
+    "chunks": ["sample_docs/notification_service.py::legacy_merge_recipient_lists"],
+    "answer": "legacy_merge_recipient_lists takes any number of recipient lists and merges them, deduping by a configurable key field (default 'email'), optionally lowercasing the key for case-insensitive comparison, and keeping only the first occurrence of each unique key across all lists."
+  },
+  {
+    "query_id": "q017",
+    "query": "What's the responsibility split between the EmailAdapter, SmsAdapter, and WebhookAdapter classes?",
+    "chunks": [
+      "sample_docs/notification_service.py::EmailAdapter",
+      "sample_docs/notification_service.py::SmsAdapter",
+      "sample_docs/notification_service.py::WebhookAdapter"
+    ],
+    "answer": "All three are ChannelAdapter implementations simulating delivery over a specific channel, each with a configurable failure_rate for testing and a sent_log tracking delivered notification ids. SmsAdapter additionally truncates the notification body to fit SMS length limits before attempting to send, and WebhookAdapter is configured with an endpoint_url it logs a simulated POST to."
+  },
+  {
+    "query_id": "q018",
+    "query": "How do dead-lettered notifications get another chance at delivery?",
+    "chunks": ["sample_docs/notification_service.py::NotificationService.requeue_dead_letters"],
+    "answer": "requeue_dead_letters resets each dead-lettered notification's attempts to 0 and delivered to False, appends it back onto the main queue, clears the dead-letter list, and returns the count of notifications that were requeued."
+  },
+  {
+    "query_id": "q019",
+    "query": "How does check_availability decide whether it needs to hit the repository versus using a cached value?",
+    "chunks": ["sample_docs/inventory_service.py::InventoryService.check_availability"],
+    "answer": "check_availability first checks the cache under the key 'avail:{sku}'. If a cached value exists it's used directly; otherwise it calls repository.get_quantity(sku), caches that result, and then compares the available quantity against the requested quantity either way."
+  },
+  {
+    "query_id": "q020",
+    "query": "What happens to reserved stock if a later item in the same order can't be fulfilled?",
+    "chunks": ["sample_docs/inventory_service.py::InventoryService.create_order"],
+    "answer": "create_order reserves each line item's stock one at a time in a loop. Its docstring explicitly notes that if a later item fails (raising InsufficientStockError), earlier successfully reserved items in that same call are NOT automatically rolled back \u2014 the caller is responsible for any compensating action."
+  },
+  {
+    "query_id": "q021",
+    "query": "How is a deterministic chunk id generated for a piece of code?",
+    "chunks": [
+      "sample_docs/inventory_service.py::chunk_id_for",
+      "sample_docs/inventory_service.py::compute_sha256"
+    ],
+    "answer": "chunk_id_for concatenates the file path, qualified name, and source text into one string, then compute_sha256 takes the SHA256 hex digest of that string. chunk_id_for truncates the digest to its first 16 hex characters as the final id."
+  },
+  {
+    "query_id": "q022",
+    "query": "What's the difference between InsufficientStockError and InventoryError?",
+    "chunks": [
+      "sample_docs/inventory_service.py::InventoryError",
+      "sample_docs/inventory_service.py::InsufficientStockError"
+    ],
+    "answer": "InventoryError is the base exception class for all inventory-related failures. InsufficientStockError is a subclass raised specifically when an order requests more units of a SKU than are available; its __init__ stores the sku, requested amount, and available amount, and builds a descriptive message from them."
+  },
+  {
+    "query_id": "q023",
+    "query": "How does cancel_order handle restocking?",
+    "chunks": ["sample_docs/inventory_service.py::InventoryService.cancel_order"],
+    "answer": "cancel_order looks up the order (raising InventoryError if it doesn't exist), calls order.cancel(), and if restock=True (the default), iterates each line item, adds its quantity back onto the current repository quantity via set_quantity, and invalidates that SKU's availability cache entry."
+  },
+  {
+    "query_id": "q024",
+    "query": "What does the low-stock report include, and how is it sorted?",
+    "chunks": ["sample_docs/inventory_service.py::InventoryService.low_stock_report"],
+    "answer": "low_stock_report only works when the repository is an InMemoryInventoryRepository (it reaches into its internal _stock dict). It filters SKUs whose quantity is at or below the given threshold via is_low_stock, and returns the resulting list sorted ascending by quantity."
+  },
+  {
+    "query_id": "q025",
+    "query": "Walk me through the legacy inventory reconciliation function \u2014 what does it flag as a discrepancy?",
+    "chunks": ["sample_docs/inventory_service.py::legacy_reconcile_inventory"],
+    "answer": "legacy_reconcile_inventory compares physical warehouse_counts against system_counts per SKU. If the absolute difference exceeds `tolerance`, it records a discrepancy dict with physical/system/diff values, optionally appends an audit log line, and (if dry_run is False) overwrites the system count with the physical count. It also flags SKUs present in system_counts but entirely missing from warehouse_counts as discrepancies with an implied physical count of 0. There's a dead loop in the middle (a for-loop over warehouse_counts that only contains a `continue`) left over from an earlier version."
+  },
+  {
+    "query_id": "q026",
+    "query": "How does an Order transition to PAID, and what stops it from being paid twice?",
+    "chunks": ["sample_docs/inventory_service.py::Order.mark_paid"],
+    "answer": "Order.mark_paid raises InventoryError if the order's current status isn't PENDING, otherwise sets status to PAID. That guard is what prevents an already-paid (or cancelled/fulfilled) order from being paid again."
+  },
+  {
+    "query_id": "q027",
+    "query": "What's the purpose of the InMemoryCache class, and is it thread-safe?",
+    "chunks": ["sample_docs/inventory_service.py::InMemoryCache"],
+    "answer": "InMemoryCache is a small TTL-based cache backed by a plain dict, storing (value, expires_at) tuples per key. Its docstring explicitly states it is not thread-safe."
+  },
+  {
+    "query_id": "q028",
+    "query": "How would I discount a price and then apply tax on top?",
+    "chunks": [
+      "sample_docs/inventory_service.py::apply_discount",
+      "sample_docs/inventory_service.py::calculate_total_with_tax"
+    ],
+    "answer": "apply_discount takes an amount and a percent_off (validated to be between 0 and 100), applies the percentage reduction, and floors the result at zero. calculate_total_with_tax then adds calculate_tax's output (amount times the tax rate, default TAX_RATE) on top of the amount passed in \u2014 so you'd call apply_discount first and feed its result into calculate_total_with_tax."
+  },
+  {
+    "query_id": "q029",
+    "query": "How does PricingEngine.price_for combine base price, discount, and tax?",
+    "chunks": ["sample_docs/inventory_service.py::PricingEngine.price_for"],
+    "answer": "price_for validates the currency, looks up the base price for the normalized SKU (raising KeyError if missing), looks up any discount percentage for that SKU (defaulting to 0), applies that discount via apply_discount, and finally returns calculate_total_with_tax on the discounted amount."
+  },
+  {
+    "query_id": "q030",
+    "query": "What tokenization rules strip out noise before indexing a document?",
+    "chunks": ["sample_docs/search_indexer.py::tokenize"],
+    "answer": "tokenize lowercases the input text, extracts alphanumeric/underscore runs via TOKEN_PATTERN, and filters out both stopwords (from DEFAULT_STOPWORDS) and tokens shorter than MIN_TOKEN_LENGTH (2 characters)."
+  },
+  {
+    "query_id": "q031",
+    "query": "How is TF-IDF actually computed for a document's terms?",
+    "chunks": [
+      "sample_docs/search_indexer.py::compute_tf",
+      "sample_docs/search_indexer.py::compute_idf",
+      "sample_docs/search_indexer.py::compute_tfidf"
+    ],
+    "answer": "compute_tf divides a term's raw count by the total terms in the document (normalized frequency). compute_idf computes log((1 + total_docs) / (1 + docs_containing_term)) + 1, a smoothed inverse document frequency. compute_tfidf just multiplies the two together to get the final weight for a term."
+  },
+  {
+    "query_id": "q032",
+    "query": "How does the query DSL handle quoted phrases and excluded terms?",
+    "chunks": ["sample_docs/search_indexer.py::parse_simple_query"],
+    "answer": "parse_simple_query first extracts quoted \"phrase\" segments via regex and strips them from the remainder. It then splits what's left on whitespace: tokens starting with '-' (longer than just the dash) become excluded terms, everything else becomes a regular search term (lowercased). If there are no terms and no phrases at all, it raises QueryParseError."
+  },
+  {
+    "query_id": "q033",
+    "query": "How are multiple ranked result lists combined into one ranking?",
+    "chunks": ["sample_docs/search_indexer.py::reciprocal_rank_fusion"],
+    "answer": "reciprocal_rank_fusion scores each doc id by summing 1/(k + rank) across every ranking list it appears in (rank is 1-indexed position), then returns doc ids sorted descending by that summed score \u2014 giving docs that rank highly across multiple lists a higher fused score."
+  },
+  {
+    "query_id": "q034",
+    "query": "What does InvertedIndex.search do when the query has excluded terms?",
+    "chunks": [
+      "sample_docs/search_indexer.py::InvertedIndex.search",
+      "sample_docs/search_indexer.py::InvertedIndex.docs_containing"
+    ],
+    "answer": "search unions docs_containing() for each required term to build candidate_ids, then for each excluded term it subtracts docs_containing(excluded_term) from that candidate set \u2014 so any document containing an excluded term is removed before scoring even begins. docs_containing itself just looks up the postings set for a lowercased term, defaulting to an empty set."
+  },
+  {
+    "query_id": "q035",
+    "query": "How is a search snippet/highlight generated around a matched term?",
+    "chunks": ["sample_docs/search_indexer.py::highlight_snippet"],
+    "answer": "highlight_snippet finds the earliest position among all query_terms in the (lowercased) text. If none match, it just returns a truncated prefix of the original text. Otherwise it takes a window of characters before and after that position, adding '...' prefix/suffix markers if the excerpt was cut off from the start or end."
+  },
+  {
+    "query_id": "q036",
+    "query": "What's the old scoring-boost function that predates the RRF rewrite, and what does it adjust for?",
+    "chunks": ["sample_docs/search_indexer.py::legacy_score_boost"],
+    "answer": "legacy_score_boost adjusts a base relevance score using document metadata: it applies a recency decay (using a half-life in days) if boost_recent is set and age_days is present, multiplies by a category-specific boost if the document's category is in category_boosts, and multiplies the score by 0.1 if the document is flagged is_deprecated."
+  },
+  {
+    "query_id": "q037",
+    "query": "How does multi_field_search combine several named queries into one result set?",
+    "chunks": ["sample_docs/search_indexer.py::InvertedIndex.multi_field_search"],
+    "answer": "multi_field_search runs each named query through self.search (asking for double the desired top_k per query), collects each query's ranked doc-id list, and fuses all of them together using reciprocal_rank_fusion, truncating the fused result to top_k."
+  },
+  {
+    "query_id": "q038",
+    "query": "How are flexible date strings parsed when the format isn't known in advance?",
+    "chunks": ["sample_docs/data_pipeline.py::parse_flexible_date"],
+    "answer": "parse_flexible_date tries each format in DATE_FORMATS (e.g. %Y-%m-%d, %Y/%m/%d, %m/%d/%Y, %d-%b-%Y) in order with datetime.strptime, catching ValueError and moving to the next format, and returns None if none of them match."
+  },
+  {
+    "query_id": "q039",
+    "query": "What counts as a null/missing value token when reading CSV records?",
+    "chunks": [
+      "sample_docs/data_pipeline.py::is_null_token",
+      "sample_docs/data_pipeline.py::read_csv_records"
+    ],
+    "answer": "is_null_token returns True if a value is a string whose stripped form matches one of NULL_TOKENS (empty string, 'null', 'NULL', 'None', 'N/A', 'n/a'). read_csv_records uses this while building each record dict, replacing any matching value with None."
+  },
+  {
+    "query_id": "q040",
+    "query": "How does SchemaValidator.validate handle a missing required field versus an optional one?",
+    "chunks": ["sample_docs/data_pipeline.py::SchemaValidator.validate"],
+    "answer": "For each FieldSpec, validate reads the raw value (falling back to the spec's default). If the value is None and the field is required, it raises ValidationError. If it's None but not required, it just uses the spec's default and moves on. Otherwise it tries to coerce the value to the field's dtype and runs any custom validator, raising ValidationError if either step fails."
+  },
+  {
+    "query_id": "q041",
+    "query": "What does dedupe_records use to decide two records are duplicates?",
+    "chunks": ["sample_docs/data_pipeline.py::dedupe_records"],
+    "answer": "dedupe_records builds a composite key per record from the values of the given key_fields (in order), and keeps only the first record seen for each unique key, discarding subsequent ones with the same key."
+  },
+  {
+    "query_id": "q042",
+    "query": "How does the legacy nested-dict flattener avoid infinite recursion on deeply nested data?",
+    "chunks": ["sample_docs/data_pipeline.py::legacy_flatten_nested_dict"],
+    "answer": "legacy_flatten_nested_dict tracks a _depth counter passed through recursive calls. If _depth exceeds max_depth (default 10), it stops recursing and instead stores the remaining sub-structure as a JSON string under the current key, rather than continuing to flatten it further."
+  },
+  {
+    "query_id": "q043",
+    "query": "What's the difference between Pipeline.run and Pipeline.run_in_batches?",
+    "chunks": [
+      "sample_docs/data_pipeline.py::Pipeline.run",
+      "sample_docs/data_pipeline.py::Pipeline.run_in_batches"
+    ],
+    "answer": "run applies all registered transforms to every record and then runs schema validation (if a validator is set) over the whole list at once, returning the valid records. run_in_batches instead splits the input into chunks via the batched() helper and calls run() once per batch, yielding each batch's output incrementally rather than processing everything in memory at once."
+  },
+  {
+    "query_id": "q044",
+    "query": "How is column-level statistics computed, and what happens with non-numeric values?",
+    "chunks": ["sample_docs/data_pipeline.py::compute_column_stats"],
+    "answer": "compute_column_stats filters the given column to only int/float values across all records, ignoring anything else (non-numeric values are simply excluded, not errored on). If there are no numeric values at all it returns a dict of all-None/zero stats; otherwise it returns count, min, max, mean, and stdev (stdev is 0.0 if there's only one value, since statistics.stdev needs at least two)."
+  },
+  {
+    "query_id": "q045",
+    "query": "What's the responsibility of the FieldSpec dataclass?",
+    "chunks": ["sample_docs/data_pipeline.py::FieldSpec"],
+    "answer": "FieldSpec is a declarative description of one field in a record schema: its name, expected dtype, whether it's required, a default value, and an optional custom validator callable used by SchemaValidator."
+  },
+  {
+    "query_id": "q046",
+    "query": "How would I combine InventoryService and AuthService to make sure only a logged-in admin can view the low-stock report?",
+    "chunks": [
+      "sample_docs/auth_service.py::AuthService.require_role",
+      "sample_docs/inventory_service.py::InventoryService.low_stock_report"
+    ],
+    "answer": "require_role(token, minimum) resolves the current user from their session token and raises AuthError if their role doesn't meet the minimum required role (checked via role_at_least). You'd call require_role(token, Role.ADMIN) first, and only call InventoryService.low_stock_report() if that check passes without raising."
+  },
+  {
+    "query_id": "q047",
+    "query": "What retry/backoff strategy do the auth service and inventory service share for transient failures?",
+    "chunks": [
+      "sample_docs/auth_service.py::AuthService",
+      "sample_docs/inventory_service.py::retry"
+    ],
+    "answer": "The @retry decorator (defined in inventory_service.py) retries a function up to max_attempts times with linear backoff (backoff_seconds * attempt), used for example on InventoryService.reserve_stock. AuthService itself doesn't use @retry directly \u2014 its resilience instead comes from account lockouts and rate limiting rather than retrying failed operations."
+  },
+  {
+    "query_id": "q048",
+    "query": "How does the code decide whether a coerced boolean value counts as true?",
+    "chunks": ["sample_docs/data_pipeline.py::coerce_type"],
+    "answer": "coerce_type handles dtype is bool specially: if the raw value is a string, it's considered true when its stripped, lowercased form is 'true', '1', 'yes', or 'y'; for non-string values it just falls back to Python's normal bool() conversion. For dtype is datetime, it delegates to parse_flexible_date instead."
+  },
+  {
+    "query_id": "q049",
+    "query": "How does chunking a generic iterable into fixed-size batches work here (batch/batched helpers)?",
+    "chunks": [
+      "sample_docs/inventory_service.py::batch",
+      "sample_docs/data_pipeline.py::batched"
+    ],
+    "answer": "Both are generators with the same core logic: accumulate items into a buffer list, and once the buffer reaches the target size, yield it and start a new buffer; after the loop ends, yield any remaining partial buffer if it's non-empty. inventory_service.batch takes a fixed `size` argument; data_pipeline.batched takes a `batch_size` with a module-level default (DEFAULT_BATCH_SIZE)."
+  },
+  {
+    "query_id": "q050",
+    "query": "What are all the notification priority levels, and how do they map to sort order?",
+    "chunks": [
+      "sample_docs/notification_service.py::NotificationPriority",
+      "sample_docs/notification_service.py::priority_sort_key"
+    ],
+    "answer": "NotificationPriority is an Enum with four levels: LOW=1, NORMAL=2, HIGH=3, URGENT=4. priority_sort_key negates the priority's value when building its sort tuple, so higher-numbered (more urgent) priorities produce a more negative key and sort first when notifications are ordered ascending by that key."
+  }
+]
