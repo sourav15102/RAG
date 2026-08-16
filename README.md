@@ -103,42 +103,73 @@ query.py                                # CLI: ask a question against the index
 eval_rag.py                              # CLI: run the eval suite
 sample_docs/                              # 5 sample Python services + the golden query set
 tests/                                     # 112 tests, fully mocked — no live services required
+Dockerfile                                  # app image: deps + src + CLIs
+docker-compose.yml                           # qdrant + elasticsearch + app (idle, run via `exec`)
 ```
 
 ## Setup
 
-**Prerequisites:** Python 3.13+, Docker, a [DeepSeek](https://platform.deepseek.com) API key, a [Voyage AI](https://www.voyageai.com) API key.
+**Prerequisites:** Docker, a [DeepSeek](https://platform.deepseek.com) API key, a [Voyage AI](https://www.voyageai.com) API key. (Python 3.13+ only if you run outside Docker.)
 
-**1. Clone and install**
+**1. Clone and set your API keys**
 ```bash
 git clone https://github.com/sourav15102/RAG.git
 cd RAG
-uv sync                       # or: pip install -r requirements.txt
-```
-
-**2. Start Qdrant + Elasticsearch**
-```bash
-docker compose up -d
-```
-
-**3. Set your API keys**
-```bash
 cp .env.example .env
 # edit .env: DEEPSEEK_API_KEY=..., VOYAGE_API_KEY=...
 ```
 
-**4. Index the sample codebase**
+**2. Start everything — Qdrant, Elasticsearch, and the app itself**
 ```bash
-python ingest.py --source sample_docs
+docker compose up -d --build
+```
+The `app` container installs its own dependencies and stays idle (`tail -f /dev/null`); you run commands into it with `docker compose exec`. `qdrant` and `elasticsearch` are reachable from inside `app` by service name — no host/port flags needed.
+
+**3. Index the sample codebase**
+```bash
+docker compose exec app python ingest.py --source sample_docs
 ```
 This chunks each file, backfills missing docstrings via DeepSeek, embeds with Voyage, and writes to both Qdrant and Elasticsearch — expect a couple of minutes due to LLM calls and embedding rate limits.
 
-**5. Ask a question**
+**4. Ask a question**
 ```bash
-python query.py "How does the login flow check if an account is locked before verifying the password?"
+docker compose exec app python query.py "How does the login flow check if an account is locked before verifying the password?" --verbose
 ```
 
+<details>
+<summary>Prefer running without Docker for the app itself?</summary>
+
+```bash
+uv sync                       # or: pip install -r requirements.txt
+docker compose up -d qdrant elasticsearch
+python ingest.py --source sample_docs
+python query.py "your question"
+```
+`ingest.py`/`query.py` default to `localhost` for both services; inside `app`'s container they instead read `QDRANT_HOST` / `QDRANT_PORT` / `ES_HOST`, which `docker-compose.yml` sets to the service names.
+</details>
+
+## Indexing your own codebase
+
+Python only — the chunker walks the `ast` module, which doesn't parse other languages. Any directory tree of `.py` files works; `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `build`, and `dist` are skipped automatically.
+
+**Locally:** point `--source` at any path on disk.
+```bash
+python ingest.py --source /path/to/your/project --collection your-project --repo your-project
+python query.py "your question" --collection your-project
+```
+
+**In Docker:** the `app` container only sees what was baked into the image at build time, so drop the codebase under `repos/` (bind-mounted read-only into the container at `/repos`, gitignored) instead of pointing at an arbitrary host path.
+```bash
+cp -r /path/to/your/project repos/your-project
+docker compose exec app python ingest.py --source /repos/your-project --collection your-project --repo your-project
+docker compose exec app python query.py "your question" --collection your-project
+```
+
+`--collection` keeps a codebase's chunks in their own Qdrant collection / Elasticsearch index — leave it as `code_chunks` and you'll mix chunks from every project you've indexed into one store. `--repo` additionally prefixes chunk IDs so multiple repos can safely share one collection if you want cross-repo search later.
+
 ## CLI reference
+
+Prefix any command below with `docker compose exec app` to run it inside the container, or drop the prefix to run locally (see above).
 
 ### `ingest.py`
 ```bash
@@ -167,13 +198,13 @@ python query.py "your question" [flags]
 ### Examples
 ```bash
 # Full pipeline with citations
-python query.py "What does DataPipeline.run do on failure?" --verbose
+docker compose exec app python query.py "What does DataPipeline.run do on failure?" --verbose
 
 # With query rewriting and HyDE enabled
-python query.py "why would inventory go negative" --rewrite --hyde
+docker compose exec app python query.py "why would inventory go negative" --rewrite --hyde
 
 # Run the eval suite
-python eval_rag.py
+docker compose exec app python eval_rag.py
 ```
 
 ---

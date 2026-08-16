@@ -16,3 +16,5 @@ third_party/
 .idea/
 .opencode/
 eval_results.json
+repos/*
+!repos/.gitkeep

@@ -18,6 +18,22 @@ services:
     volumes:
       - es_data:/usr/share/elasticsearch/data
 
+  app:
+    build: .
+    depends_on:
+      - qdrant
+      - elasticsearch
+    env_file:
+      - .env
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - ES_HOST=http://elasticsearch:9200
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+      - ${REPOS_DIR:-./repos}:/repos:ro
+
 volumes:
   qdrant_data:
   es_data:
+  hf_cache:

@@ -17,13 +17,26 @@ from ingester.storage.qdrant_store import QdrantStore
 
 load_dotenv()
 
+EXCLUDED_DIRS = {
+    ".git", "__pycache__", ".venv", "venv", "node_modules",
+    ".tox", ".mypy_cache", ".pytest_cache", "build", "dist",
+}
+
+
+def _find_python_files(source: str) -> list[Path]:
+    files = []
+    for py_file in Path(source).rglob("*.py"):
+        if not EXCLUDED_DIRS.intersection(py_file.parts):
+            files.append(py_file)
+    return sorted(files)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default="sample_docs", help="Directory of .py files to index")
-    parser.add_argument("--qdrant-host", default="localhost")
-    parser.add_argument("--qdrant-port", type=int, default=6333)
-    parser.add_argument("--es-host", default="http://localhost:9200")
+    parser.add_argument("--qdrant-host", default=os.environ.get("QDRANT_HOST", "localhost"))
+    parser.add_argument("--qdrant-port", type=int, default=int(os.environ.get("QDRANT_PORT", "6333")))
+    parser.add_argument("--es-host", default=os.environ.get("ES_HOST", "http://localhost:9200"))
     parser.add_argument("--collection", default="code_chunks", help="Qdrant collection / ES index name")
     parser.add_argument("--repo", default="", help="Repo/namespace prefix for chunk IDs")
     args = parser.parse_args()
@@ -41,9 +54,9 @@ def main() -> None:
     chunker = CodeChunker(api_key=deepseek_key)
     embedder = CodeEmbedder(api_key=voyage_key)
 
-    files = sorted(Path(args.source).glob("*.py"))
+    files = _find_python_files(args.source)
     if not files:
-        sys.exit(f"No .py files found in {args.source}")
+        sys.exit(f"No .py files found under {args.source}")
 
     all_chunks = []
     for py_file in files:

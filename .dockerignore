@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+.git
+.idea
+.opencode
+.pytest_cache
+qdrant_storage
+tests
+eval_results.json
+.env
+.DS_Store
