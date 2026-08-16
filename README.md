@@ -1,231 +1,212 @@
-# Advanced RAG Pipeline
+# Code RAG
 
-A production-grade Retrieval Augmented Generation system built from scratch in Python. Connects to any document source and answers questions using a full advanced RAG pipeline: parent-child chunking, hybrid search with Reciprocal Rank Fusion, HyDE, cross-encoder re-ranking, and LLM answer generation.
+[![tests](https://github.com/sourav15102/RAG/actions/workflows/tests.yml/badge.svg)](https://github.com/sourav15102/RAG/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.13%2B-blue)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+A hybrid RAG pipeline purpose-built for **code search**, not generic document Q&A. It AST-chunks a Python codebase into function/method/class-sized units, indexes them with both vector and keyword search, fuses the two with Reciprocal Rank Fusion, re-ranks with a cross-encoder, and generates answers where every claim is cited back to a specific chunk and line range — with an explicit "I don't know" path when the retrieved code doesn't cover the question.
 
 ## Architecture
 
-```
-Document Source (pluggable)
-        ↓
-  BaseIndexer (pluggable)
-        ├── ChunkingIndexer  →  Parent-Child Chunks  →  Qdrant (semantic) + BM25 (keyword)
-        └── PageIndexIndexer →  LLM Tree Structure   →  JSON manifest (vectorless)
-                                        ↓
-                              HybridRetriever
-                                  ├── Semantic search (nomic-embed-text-v1.5 + Qdrant)
-                                  └── BM25 search (rank_bm25)
-                                        ↓
-                              Reciprocal Rank Fusion (RRF)
-                                        ↓
-                              [Optional] HyDE
-                                        ↓
-                              [Optional] CrossEncoderReranker
-                                        ↓
-                              Parent chunk lookup
-                                        ↓
-                              RAGGenerator (Claude API)
-                                        ↓
-                                    Answer
+```mermaid
+flowchart TD
+    subgraph Indexing
+        A[".py source file"] --> B["AST chunker\nfunction / method / class units"]
+        B --> C["Docstring backfiller\nDeepSeek fills missing docstrings"]
+        C --> D["Code embedder\nVoyage voyage-4"]
+        C --> E["BM25 store\nElasticsearch, custom similarity"]
+        D --> F[("Qdrant\nvector store")]
+    end
+
+    subgraph "Query time"
+        Q["question"] --> QR["Query rewriter (optional)\nDeepSeek"]
+        QR --> HY["HyDE (optional)\nDeepSeek hypothetical docstring"]
+        HY --> VS["Vector search\nQdrant"]
+        HY --> KS["BM25 search\nElasticsearch"]
+        VS --> RRF["Reciprocal Rank Fusion\nk=60"]
+        KS --> RRF
+        RRF --> FETCH["Fetch full chunks by id"]
+        FETCH --> RERANK["Cross-encoder re-rank\nms-marco-MiniLM-L-6-v2"]
+        RERANK --> GEN["Grounded answer generation\nDeepSeek, JSON mode"]
+        GEN --> OUT["answer + per-claim citations\n+ unanswered_parts"]
+    end
+
+    F -.-> VS
+    E -.-> KS
 ```
 
 ## Stack
 
-| Component | Choice | Why |
+| Stage | Choice | Why |
 |---|---|---|
-| Embeddings | `nomic-ai/nomic-embed-text-v1.5` | Local, free, 8192 token context window |
-| Vector store | Qdrant (Docker) | Production-grade, persistent, fast ANN search |
-| Keyword search | `rank_bm25` | BM25Okapi, persisted as pickle |
-| Re-ranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Accurate pairwise scoring, fast on CPU |
-| LLM | Claude (Anthropic API) | Answer generation + HyDE hypothetical docs |
-| Token counting | `tiktoken` | Accurate chunk sizing without loading embedding model |
+| Chunking | Python `ast` module | Chunks follow logical code boundaries (functions, methods, classes) instead of arbitrary token windows; oversized nodes fall back to bounded line splits |
+| Docstring backfill | DeepSeek (`deepseek-chat`) | Cheap LLM call fills missing docstrings so undocumented code still has a natural-language summary for embedding and keyword search |
+| Embeddings | Voyage AI `voyage-4` | Code-aware embedding model with separate document/query input types |
+| Vector store | Qdrant | Persistent, named-vector ANN search |
+| Keyword search | Elasticsearch, custom BM25 similarity (`k1=1.5`, `b=0.75`) | Catches exact identifier/symbol matches embeddings miss |
+| Fusion | Reciprocal Rank Fusion (`k=60`) | Combines rank-only signals from two differently-scaled search systems without normalization |
+| Query rewriting | DeepSeek (optional) | Expands abbreviations and adds technical keywords before search |
+| HyDE | DeepSeek (optional) | Writes a hypothetical docstring and searches with that instead of the raw (short) query, closing the query/document embedding gap |
+| Re-ranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Pairwise scoring on the small fused candidate set for final precision |
+| Answer generation | DeepSeek, JSON response mode | Returns an answer plus a list of claims, each tied to a `source_chunk`, `source_function`, and line range, plus an explicit `unanswered_parts` field |
 
-## Project Structure
+Indexing also supports multi-repo scoping — `repo`/`tenant_id` are prefixed into chunk IDs and stored as filterable fields, so one Qdrant collection / Elasticsearch index can serve multiple codebases.
+
+## Eval results
+
+`eval_rag.py` runs the full pipeline against a 50-query golden set (`sample_docs/golden_set.json`) built from 5 sample services (`auth_service.py`, `data_pipeline.py`, `inventory_service.py`, `notification_service.py`, `search_indexer.py`), each query hand-labeled with the exact chunks that should be retrieved.
+
+| Metric | Score |
+|---|---|
+| Precision@5 | 24.4% |
+| Recall@5 | 91.0% |
+| F1@5 | 37.5% |
+| MRR | 0.85 |
+| Hit rate | 98.0% |
+
+Recall and hit rate are high because RRF over 50 candidates per arm rarely misses the right chunk entirely; precision@5 is capped by chunks that are topically related but not the *specific* one cited in the golden answer. Full per-query results (retrieved vs. golden chunks, precision/recall/F1/MRR per query) are written to `eval_results.json`. Re-run with `python eval_rag.py` — see `src/eval/evaluator.py` for the `top_k` / rerank settings used.
+
+## Project structure
 
 ```
 src/
-  models.py                   # RawDocument, ParentChunk, ChildChunk
-  sources/
-    base.py                   # DocumentSource ABC — plug any source here
-    local_files.py            # LocalFileSource (.txt, .md)
-  chunking/
-    parent_child.py           # ParentChildChunker + ChunkingConfig
-  indexing/
-    base.py                   # BaseIndexer ABC — plug any indexing strategy
-    indexer.py                # ChunkingIndexer (Qdrant + BM25)
-    page_index_indexer.py     # PageIndexIndexer (LLM tree, vectorless)
-    embedder.py               # NomicEmbedder (handles task prefixes)
-    qdrant_store.py           # QdrantVectorStore
-    bm25_store.py             # BM25Store
-    parent_store.py           # ParentStore (JSON)
-  retrieval/
-    retriever.py              # HybridRetriever + RRF + RetrievalResult
-    hyde.py                   # HyDEGenerator
-    reranker.py               # CrossEncoderReranker
-  generation/
-    generator.py              # RAGGenerator (streaming)
-ingest.py                     # CLI: index documents
-query.py                      # CLI: query the pipeline
+  code_chunker/
+    ast_chunker.py           # AST-based chunking: functions/methods/classes, line-fallback for oversized nodes
+    docstring_backfiller.py  # DeepSeek fills missing docstrings
+    code_chunker.py          # CodeChunker: chunk + backfill
+  embedder/
+    voyage_client.py         # Voyage AI HTTP client (batching, rate-limit backoff)
+    code_embedder.py         # Formats chunks for embedding, wraps VoyageClient
+  ingester/
+    pipeline.py               # Pipeline / PipelineConfig — sequential Step chain
+    step.py                   # Step ABC + PipelineContext
+    ingester.py                # Ingester — runs multiple pipelines over one document concurrently
+    steps/                     # ChunkStep, EmbedStep, StoreStep, BM25IndexStep, SearchStep
+    storage/
+      qdrant_store.py          # QdrantStore (vectors)
+      bm25_store.py             # BM25Store (Elasticsearch wrapper)
+      vector_store.py            # VectorStore ABC
+  storage/
+    es_store.py                 # Elasticsearch index schema + BM25 query
+  search/
+    rrf.py                      # Reciprocal Rank Fusion
+    reranker.py                  # CrossEncoderReranker
+    query_rewriter.py             # LLM query rewriting
+    hyde.py                       # HyDE hypothetical-docstring generation
+    fetcher.py                     # Resolve chunk ids → full CodeChunk payloads from Qdrant
+    generator.py                    # Grounded answer generation with citations
+    utils/llm.py                     # Shared DeepSeek chat-completion client
+  eval/
+    evaluator.py                     # RAGEvaluator — precision/recall/MRR/hit-rate on the golden set
+ingest.py                              # CLI: index a directory of .py files
+query.py                                # CLI: ask a question against the index
+eval_rag.py                              # CLI: run the eval suite
+sample_docs/                              # 5 sample Python services + the golden query set
+tests/                                     # 112 tests, fully mocked — no live services required
 ```
 
 ## Setup
 
-**Prerequisites:** Python 3.9+, Docker
+**Prerequisites:** Python 3.13+, Docker, a [DeepSeek](https://platform.deepseek.com) API key, a [Voyage AI](https://www.voyageai.com) API key.
 
-**1. Clone and create virtual environment**
+**1. Clone and install**
 ```bash
 git clone https://github.com/sourav15102/RAG.git
 cd RAG
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync                       # or: pip install -r requirements.txt
 ```
 
-**2. Start Qdrant**
+**2. Start Qdrant + Elasticsearch**
 ```bash
-docker run -d -p 6333:6333 -p 6334:6334 \
-  -v $(pwd)/qdrant_storage:/qdrant/storage \
-  --name qdrant qdrant/qdrant
+docker compose up -d
 ```
 
-**3. Set your API key**
+**3. Set your API keys**
 ```bash
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# edit .env: DEEPSEEK_API_KEY=..., VOYAGE_API_KEY=...
 ```
 
-**4. Index your documents**
+**4. Index the sample codebase**
 ```bash
-python ingest.py --source your_docs/
+python ingest.py --source sample_docs
 ```
+This chunks each file, backfills missing docstrings via DeepSeek, embeds with Voyage, and writes to both Qdrant and Elasticsearch — expect a couple of minutes due to LLM calls and embedding rate limits.
 
-**5. Ask questions**
+**5. Ask a question**
 ```bash
-python query.py "What is retrieval augmented generation?" --rerank
+python query.py "How does the login flow check if an account is locked before verifying the password?"
 ```
 
-## CLI Reference
+## CLI reference
 
 ### `ingest.py`
-
 ```bash
-python ingest.py [--source DIR] [--qdrant URL] [--indexer STRATEGY]
+python ingest.py [--source DIR] [--qdrant-host HOST] [--qdrant-port PORT] [--es-host URL] [--collection NAME] [--repo NAME]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `sample_docs` | Directory of `.txt` / `.md` files to index |
-| `--qdrant` | `http://localhost:6333` | Qdrant server URL |
-| `--indexer` | `chunking` | `chunking` (Qdrant+BM25) or `pageindex` (LLM tree) |
+| `--source` | `sample_docs` | Directory of `.py` files to index |
+| `--collection` | `code_chunks` | Qdrant collection / Elasticsearch index name |
+| `--repo` | *(none)* | Repo/namespace prefix, for indexing multiple codebases into one store |
 
 ### `query.py`
-
 ```bash
 python query.py "your question" [flags]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--top-k` | `20` | Candidates fetched per search arm (semantic + BM25 each) |
-| `--final-k` | `20` | Results kept after RRF merge |
-| `--top-n` | `5` | Final results after cross-encoder re-ranking |
-| `--rerank` | off | Enable cross-encoder re-ranking |
-| `--hyde` | off | Enable HyDE (requires `ANTHROPIC_API_KEY`) |
-| `--verbose` | off | Print retrieved chunks and scores before the answer |
-| `--dry-run` | off | Print the full LLM prompt without calling the API |
-| `--model` | `claude-haiku-4-5-20251001` | Claude model for answer generation |
-| `--qdrant` | `http://localhost:6333` | Qdrant server URL |
+| `--top-k` | `50` | Candidates fetched per search arm (vector + BM25 each) before fusion |
+| `--top-n` | `3` | Chunks kept after cross-encoder re-ranking |
+| `--rewrite` | off | Enable LLM query rewriting |
+| `--hyde` | off | Enable HyDE hypothetical-docstring search |
+| `--verbose` | off | Print retrieved chunk ids before the answer |
 
 ### Examples
-
 ```bash
-# Inspect what gets sent to the LLM (no API key needed)
-python query.py "How does attention work?" --rerank --dry-run
+# Full pipeline with citations
+python query.py "What does DataPipeline.run do on failure?" --verbose
 
-# Full pipeline with verbose retrieval output
-python query.py "What is RAG?" --rerank --verbose
+# With query rewriting and HyDE enabled
+python query.py "why would inventory go negative" --rewrite --hyde
 
-# Full pipeline including HyDE
-python query.py "What is RAG?" --rerank --hyde
-
-# Use PageIndex (LLM tree) instead of chunking
-python ingest.py --indexer pageindex
-```
-
-## Plugging in a New Document Source
-
-Subclass `DocumentSource` and implement two methods:
-
-```python
-from src.sources.base import DocumentSource
-from src.models import RawDocument
-
-class MySource(DocumentSource):
-    @property
-    def source_id(self) -> str:
-        return "my_source"
-
-    def load(self):
-        # yield RawDocument objects
-        yield RawDocument(id="...", content="...", metadata={})
-```
-
-Pass it to any indexer:
-```python
-indexer.index_source(MySource())
-```
-
-## Plugging in a New Indexer
-
-Subclass `BaseIndexer`:
-
-```python
-from src.indexing.base import BaseIndexer
-from src.models import RawDocument
-
-class MyIndexer(BaseIndexer):
-    def add_document(self, doc: RawDocument) -> None: ...
-    def finalize(self) -> None: ...
+# Run the eval suite
+python eval_rag.py
 ```
 
 ---
 
 ## Learnings
 
-### Parent-Child Chunking
-The core insight: **embed small, retrieve large**. Child chunks (~300 tokens) are embedded and searched because they are focused and produce precise vector matches. But when a child is retrieved, its parent (~1500 tokens) is what gets passed to the LLM — giving it full surrounding context. If you embed the parent directly, the embedding gets diluted across too much content and retrieval precision drops.
+### Grounded generation over free-form generation
+The generator's system prompt forces a strict JSON contract: an `answer`, a list of `claims` each tied to a `source_chunk` / `source_function` / line range with a confidence level, and an explicit `unanswered_parts` field. This turns "does the model know the answer" into "can every sentence in the answer be traced to a retrieved chunk" — a much easier thing to verify, and it naturally surfaces when retrieval failed instead of letting the model paper over gaps with general knowledge.
 
-### nomic-embed-text-v1.5 Task Prefixes
-This model requires explicit task prefixes or quality degrades significantly:
-- `search_document: <text>` — for text being stored in the index
-- `search_query: <text>` — for query text at search time
+### AST chunking beats fixed-size chunking for code
+Splitting code by token count cuts functions in half and destroys the structure a reader (or embedding model) relies on. Walking the AST and emitting one chunk per function/method/class keeps each chunk semantically whole. Oversized nodes (a 400-line function) still need a bound, so those fall back to line-based sub-splits — rare in practice, but without it a single pathological function could blow out context.
 
-In HyDE, the hypothetical document gets `search_document:` (not `search_query:`) because it's meant to behave like a real indexed document in vector space.
+### Why chunks get a docstring even when the source doesn't have one
+BM25 and embeddings both do better with natural-language signal, not just code tokens. `DocstringBackfiller` calls a cheap LLM (DeepSeek) to generate a one-line summary for any chunk missing a docstring, so keyword search has real words to match against and the embedding isn't relying purely on identifier names and syntax.
 
 ### Reciprocal Rank Fusion (RRF)
-The formula is `score(d) = Σ 1 / (k + rank(d))` where `k=60` is a standard constant that dampens the impact of very high ranks. The key property: **you never need to normalize scores across systems**. Semantic search returns cosine similarities (0–1), BM25 returns raw term frequencies — completely different scales. RRF only uses the rank position, so the scales don't matter. A document appearing in both lists gets boosted regardless of what the individual scores were.
+The formula is `score(d) = Σ 1 / (k + rank(d))` where `k=60` is a standard damping constant. The key property: **you never need to normalize scores across systems**. Vector search returns cosine similarities (0–1), BM25 returns unbounded term-frequency scores — completely different scales. RRF only uses rank position, so scale differences don't matter. A chunk appearing in both lists gets boosted regardless of what its individual scores were.
 
 ### HyDE (Hypothetical Document Embeddings)
-Short queries live in a different part of embedding space than long documents. HyDE bridges this gap: ask the LLM "write a passage that would answer this question", then embed that passage as if it were a real document. The hypothetical passage is longer, uses domain vocabulary, and matches the style of indexed content — so it lands closer to the right documents in vector space. The original query still drives BM25 since keyword matching doesn't have this semantic gap problem.
+Short queries live in a different part of embedding space than long documents. HyDE bridges this gap: ask the LLM to write a hypothetical docstring that would answer the question, then embed that instead of the raw query. The hypothetical text is longer, uses domain vocabulary, and matches the style of indexed content — so it lands closer to the right chunks in vector space. BM25 still searches on the original query, since keyword matching doesn't have this semantic gap problem.
 
-### Cross-Encoder vs Bi-Encoder
-Bi-encoders (like nomic) encode query and document **separately** then compare vectors. This is fast but loses the interaction signal between query and document. Cross-encoders take `(query, document)` as a **single input** and score the pair directly — much more accurate, but O(n) inference on the candidate set. This is why cross-encoders are only run on a small set of candidates (top-20) after the fast bi-encoder pass, not on the full corpus.
+### Cross-encoder vs. bi-encoder
+Bi-encoders (Voyage) encode query and document **separately**, then compare vectors — fast, but loses the interaction signal between the two. Cross-encoders take `(query, document)` as a single input and score the pair directly — much more accurate, but too slow to run over an entire corpus. That's why the cross-encoder only runs on the small candidate set that survives RRF, not the full index.
 
-Cross-encoder scores are raw logits — they can be negative. Higher is more relevant, but the absolute values have no fixed meaning. Only the relative ordering matters.
+### RRF `top_k` vs. cross-encoder `top_n` are separate knobs
+Widening `top_k` (candidates fetched per search arm before fusion) improves recall — more chances for the right chunk to be *somewhere* in the fused list. Tightening `top_n` (what survives the cross-encoder) improves precision — fewer, better-ranked chunks reach the generator. Tuned independently: `top_k=50` for high recall, `top_n=3` to keep the generator's context focused.
 
-### Embedder Ownership
-Initially `QdrantVectorStore` owned a `NomicEmbedder` instance in its constructor. This caused the model to load twice when `Indexer` also created one. The fix: `QdrantVectorStore` only handles vector I/O — it accepts pre-computed vectors in `upsert()` and returns raw payloads in `search()`. The caller (`ChunkingIndexer` or `HybridRetriever`) owns the embedder and decides when to load it.
+### Python 3.9 union syntax
+`X | None` needs `from __future__ import annotations` (or Python 3.10+) to parse on older interpreters — otherwise it raises `TypeError` at import time, not at type-check time, which makes the failure confusing.
 
-### `brew install docker` vs Docker Desktop
-`brew install docker` installs the CLI only — no daemon. Running `docker run ...` fails with "cannot connect to docker socket". You need either Docker Desktop (GUI app) or Colima (`brew install colima && colima start`) to actually run containers.
+### `brew install docker` vs. Docker Desktop
+`brew install docker` installs the CLI only, with no daemon — `docker run` fails with "cannot connect to the Docker daemon". You need Docker Desktop or Colima (`brew install colima && colima start`) to actually run containers.
 
-### Python 3.9 Union Type Syntax
-`X | None` union syntax was introduced in Python 3.10. On Python 3.9 it raises `TypeError: unsupported operand type(s) for |`. Fix: add `from __future__ import annotations` at the top of every file — this enables deferred annotation evaluation and makes the new syntax work transparently on 3.9.
+## License
 
-### BM25 Overlap Verification
-Testing token overlap between adjacent chunks at the character level is unreliable — `tiktoken` encodes at the subword level so character boundaries don't align with token boundaries. The correct test: sum all child token counts for a parent and verify the total exceeds the parent's own token count. If there's overlap, children collectively contain more tokens than the parent alone.
-
-### PageIndex vs Chunking — Fundamentally Different Paradigms
-Standard RAG uses embeddings to find semantically similar chunks. PageIndex skips vectors entirely — it uses an LLM to build a hierarchical table-of-contents tree from the document, then uses another LLM to reason through the tree to find relevant sections. This is better for structured documents with clear hierarchy (reports, manuals, books) but costs LLM tokens at index time. Standard chunking is better for unstructured text at scale.
-
-### `--dry-run` for Debugging RAG
-Before spending API credits, always inspect the prompt. Adding a `--dry-run` flag that prints the system prompt and full user message (context + question) without calling the API lets you verify: Is the right context being retrieved? Is the context too long? Is the question framed correctly? This is the fastest way to debug retrieval quality before touching generation.
+[MIT](LICENSE)
